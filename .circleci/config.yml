@@ -6,7 +6,40 @@ jobs:
     steps:
       - checkout
       - run: pip install --user .
+      - run: sudo pip install coverage pylint==1.9.3 pycodestyle
       - run: make test
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .coverage
+      - store_artifacts:
+          path: pylint.out
+      - store_artifacts:
+          path: pycodestyle.out
+
+  coverage:
+    docker:
+      - image: circleci/python:2.7.15-stretch
+    steps:
+      - checkout
+      - attach_workspace: { at: . }
+      - run: sudo pip install coverage
+      - run: coverage report --show-missing | tee /tmp/coverage
+      - run: bash <(curl -s https://codecov.io/bash)
+      - store_artifacts:
+          path: /tmp/coverage
+          destination: test-coverage
+
+  snyk:
+    docker:
+      - image: circleci/python:2.7.15-stretch
+    steps:
+      - checkout
+      - attach_workspace: { at: . }
+      - run: python setup.py egg_info
+      - run: cp analytics_python.egg-info/requires.txt requirements.txt
+      - run: pip install --user -r requirements.txt
+      - run: curl -sL https://raw.githubusercontent.com/segmentio/snyk_helpers/master/initialization/snyk.sh | sh
 
   test_27:
     docker:
@@ -49,13 +82,25 @@ workflows:
       - test_34
       - test_35
       - test_36
+  static_analysis:
+    jobs:
+      - build
+      - coverage:
+          requires:
+            - build
+      - snyk:
+          context: snyk
+          requires:
+            - build
   scheduled_e2e_test:
     triggers:
-      -schedule:
-        cron: "0 * * * *"
-        filters:
-          branches:
-            only: master
+      - schedule:
+          cron: "0 * * * *"
+          filters:
+            branches:
+              only:
+                - master
+                - scheduled_e2e_testing
     jobs:
       - test_27
       - test_34
